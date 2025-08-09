@@ -6,6 +6,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "Components/PrimitiveComponent.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Kismet/KismetMathLibrary.h"
 
 /* =========================================================
  *                       CONSTRUTOR
@@ -14,37 +15,33 @@ AZNodeCharacter::AZNodeCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	/* ---- SPRING ARM ---- */
+	/* ---- SpringArm ---- */
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
 	CameraBoom->TargetArmLength = 800.f;
-	CameraBoom->SetRelativeRotation(FRotator(-60.f, 0.f, 0.f));  // ângulo ISO
-	CameraBoom->bUsePawnControlRotation = true;                  // gira com mouse
-	CameraBoom->bInheritPitch = false;                           // não eleva
-	CameraBoom->bDoCollisionTest = false;                        // não encolhe (usamos fade)
+	CameraBoom->SetRelativeRotation(FRotator(-60.f, 0.f, 0.f));
+	CameraBoom->bUsePawnControlRotation = true;
+	CameraBoom->bInheritPitch = false;
+	CameraBoom->bDoCollisionTest = false;   // fade já cuida
 
-	/* ---- CÂMERA ---- */
+	/* ---- Camera ---- */
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
 
-	/* ---- MOVIMENTO ---- */
+	/* ---- Movimento ---- */
 	bUseControllerRotationYaw = false;
 	GetCharacterMovement()->bOrientRotationToMovement = true;
 }
 
-/* =========================================================
- *                        BEGIN PLAY
- * ========================================================= */
+/* ========================================================= */
 void AZNodeCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Yaw inicial de 45° para vista isométrica
 	if (AController* C = GetController())
-		C->SetControlRotation(FRotator(0.f, 45.f, 0.f));
+		C->SetControlRotation(FRotator(0.f, 45.f, 0.f));  // ângulo ISO
 
-	// Adiciona Mapping Context
 	if (APlayerController* PC = Cast<APlayerController>(Controller))
 	{
 		if (auto* SubSys =
@@ -55,28 +52,42 @@ void AZNodeCharacter::BeginPlay()
 	}
 }
 
-/* =========================================================
- *                           TICK
- * ========================================================= */
+/* ========================================================= */
 void AZNodeCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
 	UpdateObstacleFade();
 
-	// Enquanto mira, gira pawn para o alvo
+	/* --- tronco & pernas --- */
 	if (bIsAiming)
 	{
+		/* Ponto onde o cursor intercepta o mundo */
 		const FVector Target = GetAimTargetPoint();
-		FRotator Desired = (Target - GetActorLocation()).Rotation();
-		Desired.Pitch = 0.f; Desired.Roll = 0.f;
 
-		SetActorRotation(FMath::RInterpTo(GetActorRotation(), Desired, DeltaTime, 15.f));
+		/* Ângulo desejado = direção (Pawn → Target) */
+		const float DesiredYaw = (Target - GetActorLocation()).Rotation().Yaw;
+
+		const float PawnYaw = GetActorRotation().Yaw;
+		float DeltaYaw = FMath::FindDeltaAngleDegrees(PawnYaw, DesiredYaw);  // -180..180
+
+		AimYaw = FMath::Clamp(DeltaYaw, -YawThreshold, YawThreshold);        // alimenta AnimBP
+
+		/* Se exceder limiar, gira as pernas */
+		if (FMath::Abs(DeltaYaw) > YawThreshold)
+		{
+			const float Sign = FMath::Sign(DeltaYaw);
+			const float Step = Sign * TurnSpeedDegPerSec * DeltaTime;
+			AddActorWorldRotation(FRotator(0.f, Step, 0.f));
+		}
+	}
+	else
+	{
+		AimYaw = 0.f;
 	}
 }
 
 /* =========================================================
- *                 BINDING DE INPUTS
+ *                 INPUT  BINDINGS
  * ========================================================= */
 void AZNodeCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
@@ -98,7 +109,7 @@ void AZNodeCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 	}
 }
 
-/* --------------------------- MOVIMENTO --------------------------- */
+/* ----------------------- Movimento ----------------------- */
 void AZNodeCharacter::Move(const FInputActionValue& Value)
 {
 	const FVector2D Axis = Value.Get<FVector2D>();
@@ -112,14 +123,14 @@ void AZNodeCharacter::Move(const FInputActionValue& Value)
 	AddMovementInput(Rgt, Axis.X);
 }
 
-/* ----------------------------- LOOK ------------------------------ */
+/* ----------------------- Look ----------------------- */
 void AZNodeCharacter::Look(const FInputActionValue& Value)
 {
-	if (bIsAiming) return;                    // câmera fica fixa enquanto mira
+	if (bIsAiming) return;                        // câmera não gira enquanto mira
 	AddControllerYawInput(Value.Get<FVector2D>().X);
 }
 
-/* ----------------------------- ZOOM ------------------------------ */
+/* ----------------------- Zoom ----------------------- */
 void AZNodeCharacter::Zoom(const FInputActionValue& Value)
 {
 	const float Scroll = Value.Get<float>();
@@ -136,7 +147,7 @@ void AZNodeCharacter::Zoom(const FInputActionValue& Value)
 		ZoomInterpSpeed);
 }
 
-/* ------------------------- START / STOP AIM ---------------------- */
+/* --------------------- Aim state --------------------- */
 void AZNodeCharacter::StartAim()
 {
 	bIsAiming = true;
@@ -145,7 +156,7 @@ void AZNodeCharacter::StartAim()
 	{
 		PC->bShowMouseCursor = true;
 		PC->CurrentMouseCursor = EMouseCursor::Crosshairs;
-		PC->SetIgnoreLookInput(true);          // segurança extra
+		// PC->SetIgnoreLookInput(true);   // ← COMENTE
 	}
 }
 void AZNodeCharacter::StopAim()
@@ -156,72 +167,60 @@ void AZNodeCharacter::StopAim()
 	{
 		PC->bShowMouseCursor = false;
 		PC->CurrentMouseCursor = EMouseCursor::Default;
-		PC->SetIgnoreLookInput(false);
+		// PC->SetIgnoreLookInput(false);  // ← COMENTE
+
 	}
 }
 
-/* ------------------------------ FIRE ----------------------------- */
+/* ------------------------- Fire ------------------------- */
 void AZNodeCharacter::Fire()
 {
-	if (!bIsAiming) return;  // só dispara se mirando
+	if (!bIsAiming) return;
 
-	/* 1) ponto inicial = socket "head" ou olhos */
+	/* ponto inicial: cabeça (socket) ou olhos */
 	FVector Muzzle = GetActorLocation() + FVector(0.f, 0.f, BaseEyeHeight);
 	if (USkeletalMeshComponent* MeshComp = GetMesh())
-	{
 		if (MeshComp->DoesSocketExist(TEXT("head")))
 			Muzzle = MeshComp->GetSocketLocation(TEXT("head"));
-	}
 
-	/* 2) ponto alvo */
 	const FVector Target = GetAimTargetPoint();
 
-	/* 3) line trace visível (vermelho = hit, verde = miss) */
 	FHitResult Hit;
 	UKismetSystemLibrary::LineTraceSingle(
-		this,
-		Muzzle,
-		Target,
+		this, Muzzle, Target,
 		UEngineTypes::ConvertToTraceType(ECC_Visibility),
-		false,
-		TArray<AActor*>(),
-		EDrawDebugTrace::ForDuration,   // desenha por 1.5 s
-		Hit,
-		true,
-		FLinearColor::Red,
-		FLinearColor::Green,
-		1.5f);
+		false, {}, EDrawDebugTrace::ForDuration,
+		Hit, true,
+		FLinearColor::Red, FLinearColor::Green, 1.5f);
 
-	// TODO: dano ou projétil real aqui
+	// TODO: dano / projétil real
 }
 
-/* ------------------- CONVERTE CURSOR → 3-D ----------------------- */
+/* ------ converte cursor -> ponto 3-D (sem limite visível) ------ */
 FVector AZNodeCharacter::GetAimTargetPoint() const
 {
 	APlayerController* PC = Cast<APlayerController>(Controller);
 	if (!PC) return GetActorLocation();
 
-	/* 1) De-projecta posição do mouse */
-	FVector CamPos, CamDir;
-	PC->DeprojectMousePositionToWorld(CamPos, CamDir);
+	FVector Pos, Dir;
+	PC->DeprojectMousePositionToWorld(Pos, Dir);
 
-	/* 2) Raycast a 1 000 000 uu */
-	const float MaxDist = 1'000'000.f;
+	const float MaxDist = 1'000'000.f;                          // 1 km Unreal
 	FHitResult Hit;
 	FCollisionQueryParams P(SCENE_QUERY_STAT(CursorTrace), true, this);
 
 	GetWorld()->LineTraceSingleByChannel(
 		Hit,
-		CamPos,
-		CamPos + CamDir * MaxDist,
+		Pos,
+		Pos + Dir * MaxDist,
 		ECC_Visibility,
 		P);
 
-	return Hit.bBlockingHit ? Hit.ImpactPoint              // ponto exato do clique
-		: CamPos + CamDir * MaxDist;   // nada atingido → longe
+	return Hit.bBlockingHit ? Hit.ImpactPoint
+		: Pos + Dir * MaxDist;
 }
 
-/* ------------------- F A D E   D E   O B S T Á C U L O ----------- */
+/* ------------------ Fade de obstáculos ------------------ */
 void AZNodeCharacter::UpdateObstacleFade()
 {
 	const FVector Cam = FollowCamera->GetComponentLocation();
@@ -237,13 +236,13 @@ void AZNodeCharacter::UpdateObstacleFade()
 		if (UPrimitiveComponent* C = H.GetComponent())
 		{
 			if (C->GetOwner() == this) continue;
-			C->SetVisibility(false, true);   // oculta
+			C->SetVisibility(false, true);
 			Current.Add(C);
 		}
 	}
 	for (auto Old : FadedComponents)
 		if (Old.IsValid() && !Current.Contains(Old))
-			Old->SetVisibility(true, true);  // revela
+			Old->SetVisibility(true, true);
 
 	FadedComponents = Current.Array();
 }

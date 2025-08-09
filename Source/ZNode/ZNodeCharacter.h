@@ -5,7 +5,7 @@
 #include "InputActionValue.h"
 #include "ZNodeCharacter.generated.h"
 
-/* Encaminhamentos rápidos */
+/* Encaminhamentos */
 class UCameraComponent;
 class USpringArmComponent;
 class UInputMappingContext;
@@ -13,8 +13,11 @@ class UInputAction;
 class UPrimitiveComponent;
 
 /**
- * Personagem isométrico – câmera orbitável, zoom, fade de obstáculos,
- * mira em profundidade (segurando botão direito) e disparo (esq. enquanto mira).
+ * Personagem isométrico:
+ *   • Zoom + mouse-look (câmera gira só fora da mira)
+ *   • Fade de obstáculos
+ *   • Mira em profundidade (segura BTD) + tiro (BT E) com linha debug
+ *   • Tronco gira até YawThreshold; pernas acompanham depois
  */
 UCLASS()
 class ZNODE_API AZNodeCharacter : public ACharacter
@@ -30,18 +33,18 @@ public:
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
 protected:
-	/* ---------- callbacks de input ---------- */
+	/* ---------- callbacks ---------- */
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 	void Zoom(const FInputActionValue& Value);
 
-	void StartAim();     // botão direito pressionado
-	void StopAim();      // botão direito solto
-	void Fire();         // botão esquerdo enquanto mira
+	void StartAim();       // BTD pressionado
+	void StopAim();        // BTD solto
+	void Fire();           // BTE enquanto mira
 
 	/* ---------- helpers ---------- */
-	FVector GetAimTargetPoint() const; // converte cursor em ponto 3-D
-	void    UpdateObstacleFade();      // oculta/mostra obstáculos
+	FVector GetAimTargetPoint() const;  // ponto-alvo do cursor
+	void    UpdateObstacleFade();       // oculta/mostra obstáculos
 
 private:
 	/* ---------- componentes ---------- */
@@ -83,11 +86,18 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Camera|Zoom", meta = (ClampMin = "1", ClampMax = "60"))
 	float ZoomInterpSpeed = 10.f;
 
-	/* ---------- mira ---------- */
-	UPROPERTY(EditDefaultsOnly, Category = "Aim", meta = (ClampMin = "1000", ClampMax = "100000"))
+	/* ---------- mira & torção ---------- */
+	UPROPERTY(EditDefaultsOnly, Category = "Aim", meta = (ClampMin = "10", ClampMax = "180"))
+	float YawThreshold = 60.f;                // máx. do tronco (graus)
 
-	bool bIsAiming = false;                    // estado atual de mira
+	UPROPERTY(EditDefaultsOnly, Category = "Aim", meta = (ClampMin = "10", ClampMax = "720"))
+	float TurnSpeedDegPerSec = 180.f;         // velocidade das pernas
 
-	/* ---------- obstáculo fade ---------- */
+	UPROPERTY(BlueprintReadOnly, Category = "Aim", meta = (AllowPrivateAccess = "true"))
+	float AimYaw = 0.f;                       // usado pela AnimBP
+
+	bool bIsAiming = false;
+
+	/* ---------- fade runtime ---------- */
 	TArray<TWeakObjectPtr<UPrimitiveComponent>> FadedComponents;
 };
