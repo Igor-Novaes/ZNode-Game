@@ -5,20 +5,13 @@
 #include "InputActionValue.h"
 #include "ZNodeCharacter.generated.h"
 
-/* Encaminhamentos */
 class UCameraComponent;
 class USpringArmComponent;
 class UInputMappingContext;
 class UInputAction;
 class UPrimitiveComponent;
+class AWeaponBase; // <- forward declaration da arma
 
-/**
- * Personagem isométrico:
- *   • Zoom + mouse-look (câmera gira só fora da mira)
- *   • Fade de obstáculos
- *   • Mira em profundidade (segura BTD) + tiro (BT E) com linha debug
- *   • Tronco gira até YawThreshold; pernas acompanham depois
- */
 UCLASS()
 class ZNODE_API AZNodeCharacter : public ACharacter
 {
@@ -27,34 +20,34 @@ class ZNODE_API AZNodeCharacter : public ACharacter
 public:
 	AZNodeCharacter();
 
-	/* ---------- engine ---------- */
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
 protected:
-	/* ---------- callbacks ---------- */
+	// Input
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 	void Zoom(const FInputActionValue& Value);
 
-	void StartAim();       // BTD pressionado
-	void StopAim();        // BTD solto
-	void Fire();           // BTE enquanto mira
+	void StartAim();
+	void StopAim();
+	void Fire();                 // atira via arma (só se estiver mirando)
+	void ReloadWeapon();         // <--- DECLARADO AQUI
 
-	/* ---------- helpers ---------- */
-	FVector GetAimTargetPoint() const;  // ponto-alvo do cursor
-	void    UpdateObstacleFade();       // oculta/mostra obstáculos
+	// Helpers
+	FVector GetAimTargetPoint() const; // cursor → mundo
+	void    UpdateObstacleFade();      // oculta obstáculos
 
 private:
-	/* ---------- componentes ---------- */
+	// Componentes de câmera
 	UPROPERTY(VisibleAnywhere, Category = "Camera")
 	USpringArmComponent* CameraBoom = nullptr;
 
 	UPROPERTY(VisibleAnywhere, Category = "Camera")
 	UCameraComponent* FollowCamera = nullptr;
 
-	/* ---------- input assets ---------- */
+	// Enhanced Input
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext = nullptr;
 
@@ -71,33 +64,43 @@ private:
 	TObjectPtr<UInputAction> ZoomAction = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UInputAction> AimAction = nullptr;   // botão direito
+	TObjectPtr<UInputAction> AimAction = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UInputAction> FireAction = nullptr;   // botão esquerdo
+	TObjectPtr<UInputAction> FireAction = nullptr;
 
-	/* ---------- zoom ---------- */
-	UPROPERTY(EditDefaultsOnly, Category = "Camera|Zoom", meta = (ClampMin = "100", ClampMax = "3000"))
+	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> ReloadAction = nullptr; // <--- NOVO (R)
+
+	// Zoom cfg
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Zoom")
 	float MinZoom = 400.f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Camera|Zoom", meta = (ClampMin = "100", ClampMax = "3000"))
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Zoom")
 	float MaxZoom = 1200.f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Camera|Zoom", meta = (ClampMin = "1", ClampMax = "60"))
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Zoom")
 	float ZoomInterpSpeed = 10.f;
 
-	/* ---------- mira & torção ---------- */
+	// Mira & torção
 	UPROPERTY(EditDefaultsOnly, Category = "Aim", meta = (ClampMin = "10", ClampMax = "180"))
-	float YawThreshold = 60.f;                // máx. do tronco (graus)
+	float YawThreshold = 60.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Aim", meta = (ClampMin = "10", ClampMax = "720"))
-	float TurnSpeedDegPerSec = 180.f;         // velocidade das pernas
+	float TurnSpeedDegPerSec = 180.f;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Aim", meta = (AllowPrivateAccess = "true"))
-	float AimYaw = 0.f;                       // usado pela AnimBP
+	float AimYaw = 0.f;
 
 	bool bIsAiming = false;
 
-	/* ---------- fade runtime ---------- */
+	// Fade runtime
 	TArray<TWeakObjectPtr<UPrimitiveComponent>> FadedComponents;
+
+	// Arma
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	TSubclassOf<AWeaponBase> DefaultWeaponClass;   // <--- NOVO: classe da arma
+
+	UPROPERTY(VisibleInstanceOnly, Category = "Weapon")
+	TObjectPtr<AWeaponBase> CurrentWeapon;         // <--- NOVO: arma atual
 };
